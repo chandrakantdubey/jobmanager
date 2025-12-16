@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+sqlmodel
+psycopg2-binary
+python-multipart
+pypdf
+pandas
+regex
+requests
+
+
+
+passlib[argon2]
+python-jose[cryptography]
