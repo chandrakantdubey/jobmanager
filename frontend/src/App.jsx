@@ -1,12 +1,10 @@
 import React, { useContext } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, FileText, Search, Briefcase, LogOut, Globe } from 'lucide-react';
+import { LayoutDashboard, Search, Globe, LogOut, Briefcase } from 'lucide-react';
 import { clsx } from 'clsx';
 import { Toaster } from 'react-hot-toast';
 import Dashboard from './pages/Dashboard';
-import Resume from './pages/Resume';
 import SearchPage from './pages/Search';
-import Applications from './pages/Applications';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import ScrapedJobs from './pages/ScrapedJobs';
@@ -43,10 +41,8 @@ function Sidebar() {
 
       <nav className="space-y-1 flex-1">
         <NavItem to="/" icon={LayoutDashboard} label="Dashboard" />
-        <NavItem to="/resume" icon={FileText} label="Resume" />
         <NavItem to="/search" icon={Search} label="Find Jobs" />
-        <NavItem to="/scraped" icon={Globe} label="Scraped Data" />
-        <NavItem to="/applications" icon={Briefcase} label="Applications" />
+        <NavItem to="/scraped" icon={Globe} label="Scraped Jobs" />
       </nav>
 
       <div className="border-t pt-4">
@@ -93,26 +89,10 @@ function App() {
             </ProtectedRoute>
           } />
 
-          <Route path="/resume" element={
-            <ProtectedRoute>
-              <Layout>
-                <Resume />
-              </Layout>
-            </ProtectedRoute>
-          } />
-
           <Route path="/search" element={
             <ProtectedRoute>
               <Layout>
                 <SearchPage />
-              </Layout>
-            </ProtectedRoute>
-          } />
-
-          <Route path="/applications" element={
-            <ProtectedRoute>
-              <Layout>
-                <Applications />
               </Layout>
             </ProtectedRoute>
           } />

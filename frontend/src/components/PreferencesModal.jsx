@@ -59,6 +59,19 @@ export default function PreferencesModal({ isOpen, onClose, onSave, initialPrefe
         { id: 'bayt', label: 'Bayt' },
         { id: 'naukri', label: 'Naukri' },
         { id: 'bdjobs', label: 'Bdjobs' },
+        { id: 'remotive', label: 'Remotive' },
+        { id: 'weworkremotely', label: 'WWR' },
+        { id: 'workingnomads', label: 'Working Nomads' },
+        { id: 'justremote', label: 'JustRemote' },
+        { id: 'remote.co', label: 'Remote.co' },
+        { id: 'powertofly', label: 'PowerToFly' },
+        { id: 'remoteleaf', label: 'RemoteLeaf' },
+        { id: 'jobspresso', label: 'Jobspresso' },
+        { id: 'himalayas', label: 'Himalayas' },
+        { id: 'jobicy', label: 'Jobicy' },
+        { id: 'talent.com', label: 'Talent.com' },
+        { id: 'jora', label: 'Jora' },
+        { id: 'adzuna', label: 'Adzuna' },
     ];
 
     return (

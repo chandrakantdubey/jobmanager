@@ -1,54 +1,48 @@
 import { useState, useContext, useRef, useEffect } from 'react';
-import { Search, Briefcase, MapPin, Globe, ExternalLink, Bookmark, Check, Loader2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Search, Globe, Loader2, CheckCircle2, XCircle, ArrowRight, Play } from 'lucide-react';
 import api from '../api';
 import { AuthContext } from '../context/AuthContext';
+import toast from 'react-hot-toast';
 
 export default function SearchPage() {
     const { token } = useContext(AuthContext);
+    const navigate = useNavigate();
     const [params, setParams] = useState({
         search_term: 'Python Developer',
         location: 'India',
-        results_wanted: 10,
+        results_wanted: 20,
         sites: 'linkedin,indeed',
         is_remote: false,
         country: 'india',
-        job_type: '',
-        easy_apply: false,
-        date_posted: '',
-        experience: '', // New filter
     });
 
-    const [jobs, setJobs] = useState([]);
     const [loading, setLoading] = useState(false);
-    const [tracking, setTracking] = useState({});
     const [logs, setLogs] = useState([]);
+    const [jobsFound, setJobsFound] = useState(0);
+    const [searchComplete, setSearchComplete] = useState(false);
     const abortControllerRef = useRef(null);
-
     const [activeResume, setActiveResume] = useState(null);
 
-    // Fetch Active Resume on Mount
     useEffect(() => {
         const fetchResume = async () => {
             try {
                 const res = await api.get('/resumes/active');
                 setActiveResume(res.data);
 
-                // Pre-fill search_term if empty and titles exist
+                // Pre-fill search term and preferences
                 let newTerm = params.search_term;
                 if (res.data.parsed_titles && res.data.parsed_titles.length > 0 && params.search_term === 'Python Developer') {
                     newTerm = res.data.parsed_titles[0];
                 }
 
-                // Apply Preferences
                 let newParams = { ...params, search_term: newTerm };
                 if (res.data.search_preferences && Object.keys(res.data.search_preferences).length > 0) {
                     newParams = { ...newParams, ...res.data.search_preferences };
                 }
                 setParams(newParams);
-
             } catch (err) {
-                // Squelch 404s if no resume
-                console.log("No active resume found or error fetching.");
+                console.log('No active resume found.');
             }
         };
         fetchResume();
@@ -58,27 +52,26 @@ export default function SearchPage() {
         e.preventDefault();
         setLoading(true);
         setLogs([]);
-        setJobs([]);
+        setJobsFound(0);
+        setSearchComplete(false);
 
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
         }
         abortControllerRef.current = new AbortController();
 
-        // Build Query String
         const searchParams = new URLSearchParams();
         Object.keys(params).forEach(key => {
-            // Handle comma-separated lists if needed, but for now exact logic
             if (params[key] !== '') searchParams.append(key, params[key]);
         });
-        searchParams.append('token', token); // Pass token for SSE auth
+        searchParams.append('token', token);
 
         try {
-            const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8001'}/search/stream?${searchParams.toString()}`, {
+            const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/search/stream?${searchParams.toString()}`, {
                 signal: abortControllerRef.current.signal
             });
 
-            if (!response.ok) throw new Error("Search failed");
+            if (!response.ok) throw new Error('Search failed');
 
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
@@ -88,414 +81,325 @@ export default function SearchPage() {
                 if (done) break;
 
                 const chunk = decoder.decode(value, { stream: true });
-                const lines = chunk.split('\n');
+                const lines = chunk.split('\\n');
 
                 for (const line of lines) {
                     if (!line.trim()) continue;
                     try {
                         const data = JSON.parse(line);
                         if (data.type === 'update') {
-                            setLogs(prev => [...prev, data.message]);
-                        } else if (data.type === 'result') {
-                            setJobs(data.data);
+                            setLogs(prev => [...prev, { type: 'info', message: data.message }]);
+                        } else if (data.type === 'result_batch') {
+                            const count = data.data.length;
+                            setJobsFound(prev => prev + count);
+                            setLogs(prev => [...prev, { type: 'success', message: `✓ Saved ${count} jobs to database` }]);
                         } else if (data.type === 'error') {
-                            setLogs(prev => [...prev, `Error: ${data.message}`]);
+                            setLogs(prev => [...prev, { type: 'error', message: `✗ ${data.message}` }]);
                         }
                     } catch (e) {
-                        console.error("Error parsing stream:", e);
+                        console.error('Error parsing stream:', e);
                     }
                 }
             }
+
+            setSearchComplete(true);
+            toast.success(`Search complete! Found ${jobsFound} jobs`);
         } catch (err) {
             if (err.name !== 'AbortError') {
                 console.error(err);
-                setLogs(prev => [...prev, "Check console for errors."]);
+                setLogs(prev => [...prev, {
+                    type: 'error', message: 'Search failed. Please try again.'
+                }]);
+                toast.error('Search failed');
             }
         } finally {
             setLoading(false);
         }
     };
 
-    const trackJob = async (job, status = 'Saved') => {
-        // Use job.id as key for UI state, but backend might return a new ID if it created the job
-        // If job has no ID (streamed plain object), we use job_url as temporary key or index
-        const key = job.job_url;
-        setTracking(prev => ({ ...prev, [key]: 'loading' }));
-        try {
-            const payload = {
-                title: job.title,
-                company: job.company,
-                location: job.location,
-                job_url: job.job_url,
-                description: job.description || "",
-                site: job.site,
-                date_posted: job.date_posted,
-                match_score: job.match_score || 0
-            };
-            const res = await api.post(`/jobs/track?status=${status}`, payload);
-            setTracking(prev => ({ ...prev, [key]: status }));
-        } catch (err) {
-            console.error(err);
-            setTracking(prev => ({ ...prev, [key]: 'error' }));
-            alert("Failed to save job. Please try again.");
+    const handleStop = () => {
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+            setLoading(false);
+            setLogs(prev => [...prev, {
+                type: 'info', message: 'Search stopped by user'
+            }]);
         }
     };
 
-    const handleSaveAll = async () => {
-        if (!window.confirm(`Save all ${jobs.length} visible jobs?`)) return;
-        for (const job of jobs) {
-            if (!tracking[job.job_url]) {
-                await trackJob(job, 'Saved');
-            }
-        }
+    const SITE_GROUPS = {
+        'Major Job Boards': ['linkedin', 'indeed', 'glassdoor', 'ziprecruiter'],
+        'Remote-Focused': ['remotive', 'himalayas', 'weworkremotely', 'remote.co', 'workingnomads', 'justremote', 'remoteleaf', 'jobspresso', 'powertofly', 'skipthedrive'],
+        'Freelance/Gig Platforms': ['peopleperhour', 'guru', 'truelancer'],
+        'Startup Jobs': ['builtin', 'themuse'],
+        'Tech/Developer Focused': ['arc', 'dice'],
+        'General Job Aggregators': ['jora', 'adzuna', 'talent.com'],
+        'Other/Custom': ['google', 'bayt', 'naukri']
     };
 
-    const addTitleToSearch = (title) => {
-        // Logic: If plain text, replace. If we want multi-select, logic is different.
-        // User asked "select more that one titles".
-        // Let's implement OR logic: "Title1 OR Title2"
-        const current = params.search_term;
-        if (current.includes(title)) {
-            // Remove
-            const newTerm = current.replace(title, '').replace(' OR ', ' ').trim();
-            // Cleanup double spaces or trailing/leading ORs is hard with regex, let's just replace
-            // Simple approach: Split by ' OR ', filter, join
-            const parts = current.split(' OR ').map(s => s.trim()).filter(s => s !== title);
-            setParams(p => ({ ...p, search_term: parts.join(' OR ') }));
+    const toggleSite = (siteName) => {
+        const current = params.sites ? params.sites.split(',') : [];
+        let newSites;
+        if (current.includes(siteName)) {
+            newSites = current.filter(s => s !== siteName);
         } else {
-            // Add
-            if (current && !current.includes(title)) {
-                setParams(p => ({ ...p, search_term: `${current} OR ${title}` }));
-            } else {
-                setParams(p => ({ ...p, search_term: title }));
-            }
+            newSites = [...current, siteName];
+        }
+        setParams(p => ({ ...p, sites: newSites.join(',') }));
+    };
+
+    const toggleGroup = (groupName) => {
+        const groupSites = SITE_GROUPS[groupName];
+        const current = params.sites ? params.sites.split(',') : [];
+        const allSelected = groupSites.every(site => current.includes(site));
+
+        if (allSelected) {
+            // Deselect all
+            const newSites = current.filter(s => !groupSites.includes(s));
+            setParams(p => ({ ...p, sites: newSites.join(',') }));
+        } else {
+            // Select all
+            const newSites = [...new Set([...current, ...groupSites])];
+            setParams(p => ({ ...p, sites: newSites.join(',') }));
         }
     };
 
     return (
-        <div className="max-w-6xl mx-auto">
-            <h2 className="text-2xl font-bold mb-6">Find Jobs</h2>
+        <div className='max-w-7xl mx-auto'>
+            < div className='mb-8'>
+                < h1 className='text-3xl font-bold text-gray-900 mb-2'>
+                    Find Jobs
+                </h1 >
+                <p className='text-gray-600'>
+                    Search and scrape jobs from 26 + platforms - results will be saved to Scraped Jobs
+                </p >
+            </div >
 
             {/* Search Form */}
-            <div className="bg-white p-6 rounded-xl shadow-sm border mb-8">
-                {activeResume && (
-                    <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-100">
-                        <h3 className="text-sm font-semibold text-blue-900 mb-2 flex items-center gap-2">
-                            <Briefcase size={16} />
-                            Active Resume Context: {activeResume.filename}
-                        </h3>
+            < form onSubmit={handleSearch} className='bg-white rounded-xl shadow-sm border p-6 mb-6'>
+                < div className='grid grid-cols-1 md:grid-cols-2 gap-4 mb-4'>
+                    < div >
+                        <label className='block text-sm font-medium text-gray-700 mb-2'>
+                            Search Term
+                        </label >
+                        <input
+                            type='text'
+                            value={params.search_term}
+                            onChange={(e) => setParams({ ...params, search_term: e.target.value })}
+                            className='w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent'
+                            placeholder='e.g. Python Developer'
+                            required
+                        />
+                    </div >
+                    <div>
+                        <label className='block text-sm font-medium text-gray-700 mb-2'>
+                            Location
+                        </label>
+                        <input
+                            type='text'
+                            value={params.location}
+                            onChange={(e) => setParams({ ...params, location: e.target.value })}
+                            className='w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent'
+                            placeholder='e.g. India, Remote'
+                            required
+                        />
+                    </div >
+                </div >
 
-                        {activeResume.parsed_titles && activeResume.parsed_titles.length > 0 && (
-                            <div className="mb-3">
-                                <span className="text-xs text-blue-700 font-medium block mb-1">Detected Titles (Click to add to search):</span>
-                                <div className="flex flex-wrap gap-2">
-                                    {activeResume.parsed_titles.map((title, idx) => (
-                                        <button
+                <div className='grid grid-cols-1 md:grid-cols-3 gap-4 mb-6'>
+                    < div >
+                        <label className='block text-sm font-medium text-gray-700 mb-2'>
+                            Results Per Site
+                        </label >
+                        <input
+                            type='number'
+                            value={params.results_wanted}
+                            onChange={(e) => setParams({ ...params, results_wanted: parseInt(e.target.value) })}
+                            className='w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent'
+                            min='5'
+                            max='100'
+                        />
+                    </div >
+                    <div>
+                        <label className='block text-sm font-medium text-gray-700 mb-2'>
+                            Country
+                        </label>
+                        <select
+                            value={params.country}
+                            onChange={(e) => setParams({ ...params, country: e.target.value })}
+                            className='w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent'
+                        >
+                            <option value='india'>India</option>
+                            < option value='usa'>USA</option>
+                            < option value='uk'>UK</option>
+                            < option value='canada'>Canada</option>
+                            < option value='australia'>Australia</option>
+                        </select >
+                    </div >
+                    <div className='flex items-end'>
+                        < label className='flex items-center space-x-2 cursor-pointer'>
+                            < input
+                                type='checkbox'
+                                checked={params.is_remote}
+                                onChange={(e) => setParams({ ...params, is_remote: e.target.checked })}
+                                className='w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500'
+                            />
+                            <span className='text-sm font-medium text-gray-700'>Remote Only</span>
+                        </label >
+                    </div >
+                </div >
+
+                {/* Site Selection */}
+                < div className='mb-6'>
+                    < label className='block text-sm font-medium text-gray-700 mb-3'>
+                        Select Job Sites({params.sites.split(',').filter(s => s).length} selected)
+                    </label >
+                    <div className='space-y-4'>
+                        {
+                            Object.entries(SITE_GROUPS).map(([groupName, groupSites]) => {
+                                const current = params.sites ? params.sites.split(',') : [];
+                                const selectedCount = groupSites.filter(site => current.includes(site)).length;
+                                const allSelected = selectedCount === groupSites.length;
+
+                                return (
+                                    <div key={groupName} className='border rounded-lg p-4'>
+                                        < div className='flex items-center justify-between mb-3'>
+                                            < button
+                                                type='button'
+                                                onClick={() => toggleGroup(groupName)
+                                                }
+                                                className='text-sm font-semibold text-gray-700 hover:text-blue-600'
+                                            >
+                                                {groupName}({selectedCount} / {groupSites.length})
+                                            </button >
+                                            <button
+                                                type='button'
+                                                onClick={() => toggleGroup(groupName)}
+                                                className='text-xs px-3 py-1 bg-gray-100 hover:bg-blue-100 rounded'
+                                            >
+                                                {allSelected ? 'Deselect All' : 'Select All'}
+                                            </button >
+                                        </div >
+                                        <div className='flex flex-wrap gap-2'>
+                                            {
+                                                groupSites.map(site => (
+                                                    <button
+                                                        key={site}
+                                                        type='button'
+                                                        onClick={() => toggleSite(site)}
+                                                        className={`px-3 py-1 text-xs rounded-full transition-colors ${current.includes(site)
+                                                            ? 'bg-blue-600 text-white'
+                                                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                                            }`}
+                                                    >
+                                                        {site}
+                                                    </button >
+                                                ))}
+                                        </div >
+                                    </div >
+                                );
+                            })}
+                    </div >
+                </div >
+
+                {/* Search Button */}
+                < div className='flex gap-4'>
+                    < button
+                        type='submit'
+                        disabled={loading || !params.sites}
+                        className='flex-1 bg-blue-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2'
+                    >
+                        {
+                            loading ? (
+                                <>
+                                    <Loader2 className='animate-spin' size={20} />
+                                    Searching...
+                                </>
+                            ) : (
+                                <>
+                                    <Play size={20} />
+                                    Start Search
+                                </>
+                            )}
+                    </button >
+                    {loading && (
+                        <button
+                            type='button'
+                            onClick={handleStop}
+                            className='px-6 py-3 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700'
+                        >
+                            Stop
+                        </button >
+                    )}
+                </div >
+            </form >
+
+            {/* Streaming Progress */}
+            {
+                (loading || logs.length > 0) && (
+                    <div className='bg-white rounded-xl shadow-sm border mb-6'>
+                        < div className='p-6 border-b'>
+                            < div className='flex items-center justify-between'>
+                                < h2 className='text-xl font-semibold text-gray-900'>
+                                    Search Progress
+                                </h2 >
+                                <div className='flex items-center gap-4'>
+                                    < div className='text-sm font-medium text-gray-600'>
+                                        Jobs Found: <span className='text-2xl font-bold text-blue-600'>{jobsFound}</span>
+                                    </div >
+                                    {searchComplete && (
+                                        <CheckCircle2 className='text-green-600' size={24} />
+                                    )
+                                    }
+                                </div >
+                            </div >
+                        </div >
+
+                        {/* Live Logs */}
+                        < div className='p-6 max-h-96 overflow-y-auto bg-gray-50'>
+                            < div className='space-y-2 font-mono text-sm'>
+                                {
+                                    logs.map((log, idx) => (
+                                        <div
                                             key={idx}
-                                            type="button"
-                                            onClick={() => addTitleToSearch(title)}
-                                            className={`px-2 py-1 text-xs rounded-full border transition-colors ${params.search_term.includes(title)
-                                                ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                                                : 'bg-white text-blue-700 border-blue-200 hover:bg-blue-100'
+                                            className={`flex items-start gap-2 ${log.type === 'error' ? 'text-red-600' :
+                                                    log.type === 'success' ? 'text-green-600' :
+                                                        'text-gray-700'
                                                 }`}
                                         >
-                                            {title}
-                                            {params.search_term.includes(title) && <Check size={10} className="inline ml-1" />}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
+                                            <span className='text-gray-400'>›</span>
+                                            <span>{log.message}</span>
+                                        </div >
+                                    ))
+                                }
+                                {
+                                    loading && (
+                                        <div className='flex items-center gap-2 text-blue-600'>
+                                            < Loader2 className='animate-spin' size={16} />
+                                            < span > Searching...</span >
+                                        </div >
+                                    )
+                                }
+                            </div >
+                        </div >
 
-                        {activeResume.extracted_skills && (
-                            <div>
-                                <span className="text-xs text-blue-700 font-medium block mb-1">Key Skills:</span>
-                                <div className="flex flex-wrap gap-1">
-                                    {activeResume.extracted_skills.slice(0, 10).map((skill, i) => (
-                                        <span key={i} className="px-2 py-0.5 bg-blue-100 text-blue-800 text-xs rounded">
-                                            {skill}
-                                        </span>
-                                    ))}
-                                    {activeResume.extracted_skills.length > 10 && (
-                                        <span className="text-xs text-blue-500 self-center">+{activeResume.extracted_skills.length - 10} more</span>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-                    </div>
+                        {/* View Results Button */}
+                        {
+                            searchComplete && jobsFound > 0 && (
+                                <div className='p-6 border-t bg-gradient-to-r from-green-50 to-blue-50'>
+                                    < button
+                                        onClick={() => navigate('/scraped')
+                                        }
+                                        className='w-full bg-green-600 text-white py-4 px-6 rounded-lg font-semibold hover:bg-green-700 flex items-center justify-center gap-2'
+                                    >
+                                        <Globe size={20} />
+                                        View {jobsFound} Scraped Jobs
+                                        < ArrowRight size={20} />
+                                    </button >
+                                </div >
+                            )}
+                    </div >
                 )}
-
-                <form onSubmit={handleSearch} className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        <div className="lg:col-span-2">
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Keywords</label>
-                            <input
-                                type="text"
-                                value={params.search_term}
-                                onChange={e => setParams({ ...params, search_term: e.target.value })}
-                                placeholder="e.g. Python Developer"
-                                className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Location <span className="text-gray-400 text-xs">(City, State, Zip)</span>
-                            </label>
-                            <input
-                                type="text"
-                                value={params.location}
-                                onChange={e => setParams({ ...params, location: e.target.value })}
-                                placeholder="e.g. San Francisco, CA"
-                                className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                            />
-                        </div>
-                        <div className="lg:col-span-3">
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Sites</label>
-                            <div className="flex flex-wrap gap-3">
-                                {[
-                                    { id: 'linkedin', label: 'LinkedIn' },
-                                    { id: 'indeed', label: 'Indeed' },
-                                    { id: 'glassdoor', label: 'Glassdoor' },
-                                    { id: 'zip_recruiter', label: 'ZipRecruiter' },
-                                    { id: 'google', label: 'Google (Company Pages)' },
-                                    { id: 'bayt', label: 'Bayt' },
-                                    { id: 'naukri', label: 'Naukri' },
-                                    { id: 'bdjobs', label: 'Bdjobs' }
-                                ].map(site => (
-                                    <button
-                                        key={site.id}
-                                        type="button"
-                                        onClick={() => {
-                                            const current = params.sites ? params.sites.split(',') : [];
-                                            let newSites;
-                                            if (current.includes(site.id)) {
-                                                newSites = current.filter(s => s !== site.id);
-                                            } else {
-                                                newSites = [...current, site.id];
-                                            }
-                                            setParams({ ...params, sites: newSites.join(',') });
-                                        }}
-                                        className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-sm transition-colors ${params.sites.split(',').includes(site.id)
-                                            ? 'bg-blue-600 text-white border-blue-600'
-                                            : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
-                                            }`}
-                                    >
-                                        {params.sites.split(',').includes(site.id) && <Check size={14} />}
-                                        {site.label}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Job Market <span className="text-gray-400 text-xs">(Country)</span>
-                            </label>
-                            <select
-                                value={params.country}
-                                onChange={e => setParams({ ...params, country: e.target.value })}
-                                disabled={params.is_remote} // Optional: some users might want remote specific to a country
-                                className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100 disabled:text-gray-400"
-                            >
-                                <option value="india">India</option>
-                                <option value="usa">USA</option>
-                                <option value="uk">UK</option>
-                                <option value="canada">Canada</option>
-                                <option value="australia">Australia</option>
-                                <option value="germany">Germany</option>
-                                <option value="france">France</option>
-                                <option value="brazil">Brazil</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Experience</label>
-                            <select
-                                value={params.experience}
-                                onChange={e => setParams({ ...params, experience: e.target.value })}
-                                className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                            >
-                                <option value="">Any</option>
-                                <option value="entry">Entry Level</option>
-                                <option value="mid">Mid Level</option>
-                                <option value="senior">Senior Level</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Job Type</label>
-                            <select
-                                value={params.job_type}
-                                onChange={e => setParams({ ...params, job_type: e.target.value })}
-                                className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                            >
-                                <option value="">Any</option>
-                                <option value="fulltime">Full-time</option>
-                                <option value="parttime">Part-time</option>
-                                <option value="contract">Contract</option>
-                                <option value="internship">Internship</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Date Posted</label>
-                            <select
-                                value={params.date_posted}
-                                onChange={e => setParams({ ...params, date_posted: e.target.value })}
-                                className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                            >
-                                <option value="">Anytime</option>
-                                <option value="today">Past 24h</option>
-                                <option value="3days">Past 3 Days</option>
-                                <option value="week">Past Week</option>
-                                <option value="month">Past Month</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Results</label>
-                            <input
-                                type="number"
-                                value={params.results_wanted}
-                                onChange={e => setParams({ ...params, results_wanted: e.target.value })}
-                                className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                            />
-                        </div>
-                    </div>
-                    <div className="flex gap-6 pt-2">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={params.is_remote}
-                                onChange={e => setParams({ ...params, is_remote: e.target.checked })}
-                                className="w-4 h-4 rounded text-blue-600"
-                            />
-                            <span className="text-sm text-gray-700">Remote Only</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={params.easy_apply}
-                                onChange={e => setParams({ ...params, easy_apply: e.target.checked })}
-                                className="w-4 h-4 rounded text-blue-600"
-                            />
-                            <span className="text-sm text-gray-700">Easy Apply</span>
-                        </label>
-                    </div>
-
-                    <button
-                        type="submit"
-                        disabled={loading}
-                        className="w-full px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2 mt-4"
-                    >
-                        {loading ? 'Searching...' : 'Search Jobs'}
-                        {loading && <Loader2 className="animate-spin" size={18} />}
-                        {!loading && <Search size={18} />}
-                    </button>
-                </form>
-            </div>
-
-            {/* Live Logs / CLI Output */}
-            {logs.length > 0 && (
-                <div className="bg-gray-900 rounded-lg border border-gray-700 mb-8 overflow-hidden shadow-lg">
-                    <div className="bg-gray-800 px-4 py-2 flex justify-between items-center border-b border-gray-700">
-                        <span className="text-xs text-gray-400 font-mono">JobSpy CLI Output</span>
-                        {loading && <Loader2 size={14} className="text-green-500 animate-spin" />}
-                    </div>
-                    <div className="p-4 font-mono text-sm h-64 overflow-y-auto" ref={(el) => { if (el) el.scrollTop = el.scrollHeight; }}>
-                        {logs.map((log, i) => (
-                            <div key={i} className={`mb-1 ${log.includes('Error') ? 'text-red-400' : 'text-green-400'}`}>
-                                <span className="text-gray-500 mr-2">$</span>
-                                {log}
-                            </div>
-                        ))}
-                        {loading && <div className="text-gray-500 animate-pulse">_</div>}
-                    </div>
-                </div>
-            )}
-
-            {/* Results Header */}
-            {jobs.length > 0 && (
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-semibold text-gray-700">Found {jobs.length} Jobs</h3>
-                    <button
-                        onClick={handleSaveAll}
-                        className="px-4 py-2 bg-blue-100 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-200 flex items-center gap-2"
-                    >
-                        <Bookmark size={16} /> Save All
-                    </button>
-                </div>
-            )}
-
-            {/* Results */}
-            <div className="space-y-4">
-                {jobs.map(job => (
-                    <div key={job.id} className="bg-white p-6 rounded-xl shadow-sm border hover:shadow-md transition-shadow">
-                        <div className="flex justify-between items-start">
-                            <div>
-                                <h3 className="text-xl font-semibold text-blue-900">{job.title}</h3>
-                                <div className="flex items-center gap-4 text-gray-600 mt-2 mb-3">
-                                    <span className="flex items-center gap-1 font-medium">
-                                        <Briefcase size={16} />
-                                        {job.company}
-                                    </span>
-                                    <span className="flex items-center gap-1">
-                                        <MapPin size={16} />
-                                        {job.location}
-                                    </span>
-                                    <span className="flex items-center gap-1 capitalize text-xs bg-gray-100 px-2 py-1 rounded">
-                                        <Globe size={14} />
-                                        {job.site}
-                                    </span>
-                                </div>
-                            </div>
-                            <div className="flex flex-col items-end gap-2">
-                                <div className="px-3 py-1 bg-green-50 text-green-700 rounded-full text-sm font-medium border border-green-100">
-                                    Match: {job.match_score || 0}%
-                                </div>
-                            </div>
-                        </div>
-
-                        <p className="text-gray-600 line-clamp-3 mb-4 text-sm">{job.description_snippet}</p>
-
-                        <div className="flex justify-between items-center border-t pt-4 mt-2">
-                            <div className="flex gap-2 text-sm text-gray-500 overflow-x-auto">
-                                {job.matching_skills && job.matching_skills.slice(0, 5).map(s => (
-                                    <span key={s} className="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-xs">{s}</span>
-                                ))}
-                            </div>
-                            <div className="flex gap-3 shrink-0">
-                                <a
-                                    href={job.job_url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="px-4 py-2 border border-blue-200 text-blue-700 rounded-lg hover:bg-blue-50 flex items-center gap-2 text-sm font-medium"
-                                >
-                                    View Job <ExternalLink size={16} />
-                                </a>
-
-                                {tracking[job.job_url] === 'Saved' || tracking[job.job_url] === 'Applied' ? (
-                                    <button
-                                        disabled
-                                        className="px-4 py-2 bg-green-100 text-green-700 rounded-lg flex items-center gap-2 text-sm font-medium"
-                                    >
-                                        <Check size={16} /> {tracking[job.job_url] || 'Saved'}
-                                    </button>
-                                ) : (
-                                    <button
-                                        onClick={() => trackJob(job, 'Saved')}
-                                        disabled={tracking[job.job_url] === 'loading'}
-                                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2 text-sm font-medium"
-                                    >
-                                        {tracking[job.job_url] === 'loading' ? <Loader2 className="animate-spin" size={16} /> : <Bookmark size={16} />}
-                                        Save
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                ))}
-                {jobs.length === 0 && !loading && (
-                    <div className="text-center text-gray-500 py-12">
-                        Start your search to find relevant jobs.
-                    </div>
-                )}
-            </div>
-        </div>
+        </div >
     );
 }
