@@ -15,7 +15,23 @@ export default function SearchPage() {
         sites: 'linkedin,indeed',
         is_remote: false,
         country: 'india',
+        job_type: [],
     });
+
+    const JOB_TITLES = [
+        "Software Engineer", "Frontend Developer", "Backend Developer", "Full Stack Developer",
+        "DevOps Engineer", "Data Scientist", "Product Manager", "UI/UX Designer",
+        "QA Engineer", "Mobile Developer", "System Administrator", "Cloud Architect"
+    ];
+
+    const JOB_TYPES = [
+        { id: 'fulltime', label: 'Full-time' },
+        { id: 'parttime', label: 'Part-time' },
+        { id: 'contract', label: 'Contract' },
+        { id: 'freelance', label: 'Freelance' },
+        { id: 'internship', label: 'Internship' },
+        { id: 'temporary', label: 'Temporary' },
+    ];
 
     const [loading, setLoading] = useState(false);
     const [logs, setLogs] = useState([]);
@@ -34,6 +50,11 @@ export default function SearchPage() {
                 let newTerm = params.search_term;
                 if (res.data.parsed_titles && res.data.parsed_titles.length > 0 && params.search_term === 'Python Developer') {
                     newTerm = res.data.parsed_titles[0];
+                }
+
+                // Ensure job_type is initialized
+                if (!res.data.search_preferences.job_type) {
+                    res.data.search_preferences.job_type = [];
                 }
 
                 let newParams = { ...params, search_term: newTerm };
@@ -62,7 +83,11 @@ export default function SearchPage() {
 
         const searchParams = new URLSearchParams();
         Object.keys(params).forEach(key => {
-            if (params[key] !== '') searchParams.append(key, params[key]);
+            if (key === 'job_type' && Array.isArray(params[key])) {
+                params[key].forEach(val => searchParams.append('job_type', val));
+            } else if (params[key] !== '' && params[key] != null) {
+                searchParams.append(key, params[key]);
+            }
         });
         searchParams.append('token', token);
 
@@ -177,20 +202,28 @@ export default function SearchPage() {
 
             {/* Search Form */}
             < form onSubmit={handleSearch} className='bg-white rounded-xl shadow-sm border p-6 mb-6'>
-                < div className='grid grid-cols-1 md:grid-cols-2 gap-4 mb-4'>
-                    < div >
+                <div className='grid grid-cols-1 md:grid-cols-2 gap-4 mb-4'>
+                    <div>
                         <label className='block text-sm font-medium text-gray-700 mb-2'>
                             Search Term
-                        </label >
-                        <input
-                            type='text'
-                            value={params.search_term}
-                            onChange={(e) => setParams({ ...params, search_term: e.target.value })}
-                            className='w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent'
-                            placeholder='e.g. Python Developer'
-                            required
-                        />
-                    </div >
+                        </label>
+                        <div className="relative">
+                            <input
+                                list="job-titles"
+                                type='text'
+                                value={params.search_term}
+                                onChange={(e) => setParams({ ...params, search_term: e.target.value })}
+                                className='w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent'
+                                placeholder='e.g. Python Developer'
+                                required
+                            />
+                            <datalist id="job-titles">
+                                {JOB_TITLES.map((title, idx) => (
+                                    <option key={idx} value={title} />
+                                ))}
+                            </datalist>
+                        </div>
+                    </div>
                     <div>
                         <label className='block text-sm font-medium text-gray-700 mb-2'>
                             Location
@@ -203,23 +236,51 @@ export default function SearchPage() {
                             placeholder='e.g. India, Remote'
                             required
                         />
-                    </div >
-                </div >
+                    </div>
+                </div>
+
+                {/* Job Types & Preferences */}
+                <div className="mb-6">
+                    <label className='block text-sm font-medium text-gray-700 mb-2'>Employment Type</label>
+                    <div className="flex flex-wrap gap-3">
+                        {JOB_TYPES.map(type => (
+                            <label key={type.id} className="flex items-center space-x-2 cursor-pointer bg-gray-50 px-3 py-2 rounded-md border hover:bg-gray-100">
+                                <input
+                                    type="checkbox"
+                                    checked={params.job_type.includes(type.id)}
+                                    onChange={(e) => {
+                                        const newTypes = e.target.checked
+                                            ? [...params.job_type, type.id]
+                                            : params.job_type.filter(t => t !== type.id);
+                                        setParams({ ...params, job_type: newTypes });
+                                    }}
+                                    className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                                />
+                                <span className="text-sm text-gray-700">{type.label}</span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
 
                 <div className='grid grid-cols-1 md:grid-cols-3 gap-4 mb-6'>
-                    < div >
+                    <div>
                         <label className='block text-sm font-medium text-gray-700 mb-2'>
-                            Results Per Site
-                        </label >
+                            Results Per Site ({params.results_wanted})
+                        </label>
                         <input
-                            type='number'
+                            type='range'
                             value={params.results_wanted}
                             onChange={(e) => setParams({ ...params, results_wanted: parseInt(e.target.value) })}
-                            className='w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent'
+                            className='w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer'
                             min='5'
-                            max='100'
+                            max='200'
+                            step='5'
                         />
-                    </div >
+                        <div className="flex justify-between text-xs text-gray-500 mt-1">
+                            <span>5</span>
+                            <span>200</span>
+                        </div>
+                    </div>
                     <div>
                         <label className='block text-sm font-medium text-gray-700 mb-2'>
                             Country
@@ -230,24 +291,24 @@ export default function SearchPage() {
                             className='w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent'
                         >
                             <option value='india'>India</option>
-                            < option value='usa'>USA</option>
-                            < option value='uk'>UK</option>
-                            < option value='canada'>Canada</option>
-                            < option value='australia'>Australia</option>
-                        </select >
-                    </div >
-                    <div className='flex items-end'>
-                        < label className='flex items-center space-x-2 cursor-pointer'>
-                            < input
+                            <option value='usa'>USA</option>
+                            <option value='uk'>UK</option>
+                            <option value='canada'>Canada</option>
+                            <option value='australia'>Australia</option>
+                        </select>
+                    </div>
+                    <div className='flex items-end pb-2'>
+                        <label className='flex items-center space-x-2 cursor-pointer'>
+                            <input
                                 type='checkbox'
                                 checked={params.is_remote}
                                 onChange={(e) => setParams({ ...params, is_remote: e.target.checked })}
                                 className='w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500'
                             />
                             <span className='text-sm font-medium text-gray-700'>Remote Only</span>
-                        </label >
-                    </div >
-                </div >
+                        </label>
+                    </div>
+                </div>
 
                 {/* Site Selection */}
                 < div className='mb-6'>
@@ -363,8 +424,8 @@ export default function SearchPage() {
                                         <div
                                             key={idx}
                                             className={`flex items-start gap-2 ${log.type === 'error' ? 'text-red-600' :
-                                                    log.type === 'success' ? 'text-green-600' :
-                                                        'text-gray-700'
+                                                log.type === 'success' ? 'text-green-600' :
+                                                    'text-gray-700'
                                                 }`}
                                         >
                                             <span className='text-gray-400'>›</span>

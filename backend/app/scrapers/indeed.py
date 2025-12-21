@@ -120,7 +120,24 @@ class IndeedScraper(BaseScraper):
                 search_term = input_data.search_term.replace('"', '\\"') if input_data.search_term else ""
                 
                 # Format Query
-                query = JOB_SEARCH_QUERY.replace("{what}", f'what: "{search_term}"' if search_term else "") \
+                # Append job type to what if present
+                what_term = search_term
+                if input_data.job_type:
+                    jt_map = {
+                        JobType.FULL_TIME: "fulltime",
+                        JobType.PART_TIME: "parttime",
+                        JobType.CONTRACT: "contract",
+                        JobType.TEMPORARY: "temporary",
+                        JobType.INTERNSHIP: "internship",
+                        JobType.FREELANCE: "contract"
+                    }
+                    # Append first valid type
+                    for jt in input_data.job_type:
+                        if jt in jt_map:
+                            what_term += f" {jt_map[jt]}"
+                            break
+
+                query = JOB_SEARCH_QUERY.replace("{what}", f'what: "{what_term}"' if what_term else "") \
                                         .replace("{location}", f'location: {{where: "{input_data.location}", radius: 50, radiusUnit: MILES}}' if input_data.location else "") \
                                         .replace("{cursor}", f'cursor: "{cursor}"' if cursor else "") \
                                         .replace("{filters}", filters)
@@ -178,7 +195,7 @@ class IndeedScraper(BaseScraper):
         return jobs[:input_data.results_wanted]
 
     def _build_filters(self, input_data: ScraperInput) -> str:
-        # Simplified filters
+        # Complex GraphQL filters are undocumented, using query augmentation instead
         return ""
 
     def _process_job(self, job: dict) -> JobPost:

@@ -9,6 +9,7 @@ class JobType(Enum):
     CONTRACT = "contract"
     INTERNSHIP = "internship"
     TEMPORARY = "temporary"
+    FREELANCE = "freelance"
 
 class Country(Enum):
     USA = "usa"

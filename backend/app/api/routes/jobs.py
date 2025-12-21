@@ -18,7 +18,9 @@ async def stream_jobs(
     sites: List[str] = Query(default=["linkedin", "indeed"]),
     is_remote: bool = False,
     country: str = "usa",
-    offset: int = 0
+    offset: int = 0,
+    job_type: Optional[List[str]] = Query(default=None),
+    hours_old: Optional[int] = None
 ):
     """
     Stream job search results (SSE style JSON objects).
@@ -31,7 +33,9 @@ async def stream_jobs(
             sites=sites,
             is_remote=is_remote,
             country=country,
-            offset=offset
+            offset=offset,
+            job_type=job_type,
+            hours_old=hours_old
         ),
         media_type="application/x-ndjson"
     )

@@ -30,7 +30,8 @@ class LinkedInScraper(BaseScraper):
                 JobType.PART_TIME: "P",
                 JobType.CONTRACT: "C",
                 JobType.TEMPORARY: "T",
-                JobType.INTERNSHIP: "I"
+                JobType.INTERNSHIP: "I",
+                JobType.FREELANCE: "C"
             }
             # Assuming input_data.job_type is a list, take first
             if isinstance(input_data.job_type, list) and len(input_data.job_type) > 0:

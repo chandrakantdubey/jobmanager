@@ -105,7 +105,7 @@ class GlassdoorScraper(BaseScraper):
              return []
              
         cursor = None
-        for page in range(1, 5): # Limit pages
+        for page in range(1, 15): # Limit pages (supports ~400 jobs)
             if len(jobs) >= input_data.results_wanted:
                 break
                 
@@ -186,9 +186,41 @@ class GlassdoorScraper(BaseScraper):
         except Exception as e:
             self.logger.error(f"Loc fetch failed: {e}")
             
+        # Fallback
+        if "india" in location.lower():
+            return 115, "COUNTRY"
+        elif "united states" in location.lower() or "usa" in location.lower() or "us" in location.lower():
+            return 1, "COUNTRY"
+            
         return None, None
 
     def _build_payload(self, input_data, loc_id, loc_type, page, cursor):
+        # Filters
+        filter_params = []
+        if input_data.job_type:
+             jt_map = {
+                JobType.FULL_TIME: "minFullTime",
+                JobType.PART_TIME: "minPartTime",
+                JobType.CONTRACT: "minContract",
+                JobType.INTERNSHIP: "minInternship",
+                JobType.TEMPORARY: "minTemporary",
+                JobType.FREELANCE: "minContract"
+             }
+             valid = [jt_map[jt] for jt in input_data.job_type if jt in jt_map]
+             if valid:
+                 # Glassdoor usually takes one 'jobType'? Or multiple?
+                 # Assuming simplistic "jobType" key in filterParams
+                 # Actually Glassdoor filters are complex "minRating", "fromAge", etc.
+                 # For jobType, it's often a specific key.
+                 # Let's try simplified generic key if known, else minimal.
+                 # A common key is "jobType".
+                 for v in valid:
+                     filter_params.append({"key": "jobType", "value": v})
+                     
+        if input_data.hours_old:
+             days = max(1, input_data.hours_old // 24)
+             filter_params.append({"key": "fromAge", "value": str(days)})
+
         return {
             "operationName": "JobSearchResultsQuery",
             "variables": {
@@ -198,6 +230,7 @@ class GlassdoorScraper(BaseScraper):
                 "numJobsToShow": 30,
                 "pageNumber": page,
                 "pageCursor": cursor,
+                "filterParams": filter_params
             },
             "query": QUERY_TEMPLATE
         }

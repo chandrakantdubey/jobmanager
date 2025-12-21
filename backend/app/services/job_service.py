@@ -154,6 +154,7 @@ class JobService:
         min_experience: int = None,
         max_experience: int = None,
         hours_old: int = None,
+        job_type: List[str] = None,
         offset: int = 0,
         session: Session = None
     ):
@@ -234,6 +235,7 @@ class JobService:
                     min_experience=min_experience,
                     max_experience=max_experience,
                     hours_old=hours_old,
+                    job_type=[JobType(jt) for jt in job_type] if job_type else None,
                     offset=offset
                 )
 
